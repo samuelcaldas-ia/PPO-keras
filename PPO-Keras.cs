@@ -24,242 +24,245 @@ using static Tensorflow.KerasApi;
 using CustomRandom;
 //
 
-# Initial framework taken from https://github.com/jaara/AI-blog/blob/master/CartPole-A3C.py
+// Initial framework taken // from https://github.com/jaara/AI-blog/blob/master/CartPole-A3C.py
 
-import numpy as np
+// import numpy as np
 
-import gym
+// import gym
 
-from keras.models import Model
-from keras.layers import Input, Dense
-from keras import backend as K
-from keras.optimizers import Adam
+// from keras.models import Model
+// from keras.layers import Input, Dense
+// from keras import backend as K
+// from keras.optimizers import Adam
 
-import numba as nb
-from tensorboardX import SummaryWriter
+// import numba as nb
+// from tensorboardX import SummaryWriter
 
-ENV = 'LunarLander-v2'
-CONTINUOUS = False
+var ENV = "LunarLander-v2";
+var CONTINUOUS = false;
 
-EPISODES = 100000
+var EPISODES = 100000;
 
-LOSS_CLIPPING = 0.2 # Only implemented clipping for the surrogate loss, paper said it was best
-EPOCHS = 10
-NOISE = 1.0 # Exploration noise
+var LOSS_CLIPPING = 0.2; // Only implemented clipping for (int the surrogate loss, paper said it was best
+var EPOCHS = 10;
+var NOISE = 1.0; // Exploration noise
 
-GAMMA = 0.99
+var GAMMA = 0.99;
 
-BUFFER_SIZE = 2048
-BATCH_SIZE = 256
-NUM_ACTIONS = 4
-NUM_STATE = 8
-HIDDEN_SIZE = 128
-NUM_LAYERS = 2
-ENTROPY_LOSS = 5e-3
-LR = 1e-4  # Lower lr stabilises training greatly
+var BUFFER_SIZE = 2048;
+var BATCH_SIZE = 256;
+var num_actions = 4;
+var NUM_STATE = 8;
+var HIDDEN_SIZE = 128;
+var NUM_LAYERS = 2;
+var ENTROPY_LOSS = 5e-3;
+var var LR = 1e-4;  // Lower lr stabilises training greatly
 
-DUMMY_ACTION, DUMMY_VALUE = np.zeros((1, NUM_ACTIONS)), np.zeros((1, 1))
-
-
-@nb.jit
-def exponential_average(old, new, b1):
-    return old * b1 + (1-b1) * new
+var (DUMMY_ACTION, DUMMY_VALUE) = np.zeros((1, NUM_ACTIONS)), np.zeros((1, 1));
 
 
-def proximal_policy_optimization_loss(advantage, old_prediction):
-    def loss(y_true, y_pred):
-        prob = K.sum(y_true * y_pred, axis=-1)
-        old_prob = K.sum(y_true * old_prediction, axis=-1)
-        r = prob/(old_prob + 1e-10)
-        return -K.mean(K.minimum(r * advantage, K.clip(r, min_value=1 - LOSS_CLIPPING, max_value=1 + LOSS_CLIPPING) * advantage) + ENTROPY_LOSS * -(prob * K.log(prob + 1e-10)))
-    return loss
+
+} static object exponential_average(object old, object new, object b1){
+    return old * b1 + (1 - b1) * new;
 
 
-def proximal_policy_optimization_loss_continuous(advantage, old_prediction):
-    def loss(y_true, y_pred):
-        var = K.square(NOISE)
-        pi = 3.1415926
-        denom = K.sqrt(2 * pi * var)
-        prob_num = K.exp(- K.square(y_true - y_pred) / (2 * var))
-        old_prob_num = K.exp(- K.square(y_true - old_prediction) / (2 * var))
-
-        prob = prob_num/denom
-        old_prob = old_prob_num/denom
-        r = prob/(old_prob + 1e-10)
-
-        return -K.mean(K.minimum(r * advantage, K.clip(r, min_value=1 - LOSS_CLIPPING, max_value=1 + LOSS_CLIPPING) * advantage))
-    return loss
+} static object proximal_policy_optimization_loss(object advantage, object old_prediction) {
+    static object loss(object y_true, object y_pred) {
+        prob = np.sum(y_true * y_pred, axis: -1);
+        old_prob = np.sum(y_true * old_prediction, axis: -1);
+        r = prob / (old_prob + 1e-10);
+        return -np.mean(np.minimum(r * advantage, np.clip(r, min_value: 1 - LOSS_CLIPPING, max_value: 1 + LOSS_CLIPPING) * advantage) + ENTROPY_LOSS * -(prob * np.log(prob + 1e-10)));
+    }
+    return loss;
 
 
-class Agent:
-    def __init__(self):
-        self.critic = self.build_critic()
-        if CONTINUOUS is False:
-            self.actor = self.build_actor()
-        else:
-            self.actor = self.build_actor_continuous()
 
-        self.env = gym.make(ENV)
-        print(self.env.action_space, 'action_space', self.env.observation_space, 'observation_space')
-        self.episode = 0
-        self.observation = self.env.reset()
-        self.val = False
-        self.reward = []
-        self.reward_over_time = []
-        self.name = self.get_name()
-        self.writer = SummaryWriter(self.name)
-        self.gradient_steps = 0
+} static object proximal_policy_optimization_loss_continuous(object advantage, object old_prediction) {
+    static object loss(object y_true, object y_pred) {
+        var = np.square(NOISE);
+        pi = 3.1415926;
+        denom = np.sqrt(2 * pi * var);
+        prob_num = np.exp(-np.square(y_true - y_pred) / (2 * var));
+        old_prob_num = np.exp(-np.square(y_true - old_prediction) / (2 * var));
 
-    def get_name(self):
-        name = 'AllRuns/'
-        if CONTINUOUS is True:
-            name += 'continous/'
-        else:
-            name += 'discrete/'
-        name += ENV
-        return name
+        prob = prob_num / denom;
+        old_prob = old_prob_num / denom;
+        r = prob / (old_prob + 1e-10);
 
-    def build_actor(self):
-        state_input = Input(shape=(NUM_STATE,))
-        advantage = Input(shape=(1,))
-        old_prediction = Input(shape=(NUM_ACTIONS,))
-
-        x = Dense(HIDDEN_SIZE, activation='tanh')(state_input)
-        for _ in range(NUM_LAYERS - 1):
-            x = Dense(HIDDEN_SIZE, activation='tanh')(x)
-
-        out_actions = Dense(NUM_ACTIONS, activation='softmax', name='output')(x)
-
-        model = Model(inputs=[state_input, advantage, old_prediction], outputs=[out_actions])
-        model.compile(optimizer=Adam(lr=LR),
-                      loss=[proximal_policy_optimization_loss(
-                          advantage=advantage,
-                          old_prediction=old_prediction)])
-        model.summary()
-
-        return model
-
-    def build_actor_continuous(self):
-        state_input = Input(shape=(NUM_STATE,))
-        advantage = Input(shape=(1,))
-        old_prediction = Input(shape=(NUM_ACTIONS,))
-
-        x = Dense(HIDDEN_SIZE, activation='tanh')(state_input)
-        for _ in range(NUM_LAYERS - 1):
-            x = Dense(HIDDEN_SIZE, activation='tanh')(x)
-
-        out_actions = Dense(NUM_ACTIONS, name='output', activation='tanh')(x)
-
-        model = Model(inputs=[state_input, advantage, old_prediction], outputs=[out_actions])
-        model.compile(optimizer=Adam(lr=LR),
-                      loss=[proximal_policy_optimization_loss_continuous(
-                          advantage=advantage,
-                          old_prediction=old_prediction)])
-        model.summary()
-
-        return model
-
-    def build_critic(self):
-
-        state_input = Input(shape=(NUM_STATE,))
-        x = Dense(HIDDEN_SIZE, activation='tanh')(state_input)
-        for _ in range(NUM_LAYERS - 1):
-            x = Dense(HIDDEN_SIZE, activation='tanh')(x)
-
-        out_value = Dense(1)(x)
-
-        model = Model(inputs=[state_input], outputs=[out_value])
-        model.compile(optimizer=Adam(lr=LR), loss='mse')
-
-        return model
-
-    def reset_env(self):
-        self.episode += 1
-        if self.episode % 100 == 0:
-            self.val = True
-        else:
-            self.val = False
-        self.observation = self.env.reset()
-        self.reward = []
-
-    def get_action(self):
-        p = self.actor.predict([self.observation.reshape(1, NUM_STATE), DUMMY_VALUE, DUMMY_ACTION])
-        if self.val is False:
-
-            action = np.random.choice(NUM_ACTIONS, p=np.nan_to_num(p[0]))
-        else:
-            action = np.argmax(p[0])
-        action_matrix = np.zeros(NUM_ACTIONS)
-        action_matrix[action] = 1
-        return action, action_matrix, p
-
-    def get_action_continuous(self):
-        p = self.actor.predict([self.observation.reshape(1, NUM_STATE), DUMMY_VALUE, DUMMY_ACTION])
-        if self.val is False:
-            action = action_matrix = p[0] + np.random.normal(loc=0, scale=NOISE, size=p[0].shape)
-        else:
-            action = action_matrix = p[0]
-        return action, action_matrix, p
-
-    def transform_reward(self):
-        if self.val is True:
-            self.writer.add_scalar('Val episode reward', np.array(self.reward).sum(), self.episode)
-        else:
-            self.writer.add_scalar('Episode reward', np.array(self.reward).sum(), self.episode)
-        for j in range(len(self.reward) - 2, -1, -1):
-            self.reward[j] += self.reward[j + 1] * GAMMA
-
-    def get_batch(self):
-        batch = [[], [], [], []]
-
-        tmp_batch = [[], [], []]
-        while len(batch[0]) < BUFFER_SIZE:
-            if CONTINUOUS is False:
-                action, action_matrix, predicted_action = self.get_action()
-            else:
-                action, action_matrix, predicted_action = self.get_action_continuous()
-            observation, reward, done, info = self.env.step(action)
-            self.reward.append(reward)
-
-            tmp_batch[0].append(self.observation)
-            tmp_batch[1].append(action_matrix)
-            tmp_batch[2].append(predicted_action)
-            self.observation = observation
-
-            if done:
-                self.transform_reward()
-                if self.val is False:
-                    for i in range(len(tmp_batch[0])):
-                        obs, action, pred = tmp_batch[0][i], tmp_batch[1][i], tmp_batch[2][i]
-                        r = self.reward[i]
-                        batch[0].append(obs)
-                        batch[1].append(action)
-                        batch[2].append(pred)
-                        batch[3].append(r)
-                tmp_batch = [[], [], []]
-                self.reset_env()
-
-        obs, action, pred, reward = np.array(batch[0]), np.array(batch[1]), np.array(batch[2]), np.reshape(np.array(batch[3]), (len(batch[3]), 1))
-        pred = np.reshape(pred, (pred.shape[0], pred.shape[2]))
-        return obs, action, pred, reward
-
-    def run(self):
-        while self.episode < EPISODES:
-            obs, action, pred, reward = self.get_batch()
-            obs, action, pred, reward = obs[:BUFFER_SIZE], action[:BUFFER_SIZE], pred[:BUFFER_SIZE], reward[:BUFFER_SIZE]
-            old_prediction = pred
-            pred_values = self.critic.predict(obs)
-
-            advantage = reward - pred_values
-
-            actor_loss = self.actor.fit([obs, advantage, old_prediction], [action], batch_size=BATCH_SIZE, shuffle=True, epochs=EPOCHS, verbose=False)
-            critic_loss = self.critic.fit([obs], [reward], batch_size=BATCH_SIZE, shuffle=True, epochs=EPOCHS, verbose=False)
-            self.writer.add_scalar('Actor loss', actor_loss.history['loss'][-1], self.gradient_steps)
-            self.writer.add_scalar('Critic loss', critic_loss.history['loss'][-1], self.gradient_steps)
-
-            self.gradient_steps += 1
+        return -np.mean(np.minimum(r * advantage, np.clip(r, min_value: 1 - LOSS_CLIPPING, max_value: 1 + LOSS_CLIPPING) * advantage));
+    }
+    return loss;
+}
 
 
-if __name__ == '__main__':
-    ag = Agent()
-    ag.run()
+class Agent {
+    static object Agent(){
+        this.critic = this.build_critic();
+        if (CONTINUOUS == false)
+            this.actor = this.build_actor();
+        else
+            this.actor = this.build_actor_continuous();
+
+        this.env = new CartPoleEnv(WinFormEnvViewer.Factory);
+        Console.WriteLine(this.env.ActionSpace, "action_space", this.env.ObservationSpace, "observation_space");
+        this.episode = 0;
+        this.observation = this.env.Reset();
+        this.val = false;
+        this.reward = new List<double>();
+        this.reward_over_time = new List<double>();
+        this.name = this.get_name();
+        this.writer = SummaryWriter(this.name);
+        this.gradient_steps = 0;
+
+    } static object get_name(){
+        name = "AllRuns/";
+        if (CONTINUOUS == true)
+            name += "continous/";
+        else
+            name += "discrete/";
+        name += ENV;
+        return name;
+
+    } static object build_actor(){
+        state_input = Input(shape: (NUM_STATE,));
+        advantage = Input(shape: (1,));
+        old_prediction = Input(shape: (NUM_ACTIONS,));
+
+        x = Dense(HIDDEN_SIZE, activation: "tanh").Apply(state_input);
+        for (int _ in range(NUM_LAYERS - 1))
+            x = Dense(HIDDEN_SIZE, activation: "tanh").Apply(x);
+
+        out_actions = Dense(NUM_ACTIONS, activation: "softmax", name: "output").Apply(x);
+
+        model = Model(inputs:[state_input, advantage, old_prediction], outputs:[out_actions]);
+        model.compile(optimizer: Adam(lr: LR), loss:[proximal_policy_optimization_loss(advantage: advantage, old_prediction: old_prediction)]);
+        model.summary();
+
+        return model;
+
+    } static object build_actor_continuous(){
+        state_input = Input(shape: (NUM_STATE,));
+        advantage = Input(shape: (1,));
+        old_prediction = Input(shape: (NUM_ACTIONS,));
+
+        x = Dense(HIDDEN_SIZE, activation: "tanh").Apply(state_input);
+        for (int _ in range(NUM_LAYERS - 1))
+            x = Dense(HIDDEN_SIZE, activation: "tanh").Apply(x);
+
+        out_actions = Dense(NUM_ACTIONS, name: "output", activation: "tanh").Apply(x);
+
+        model = Model(inputs:[state_input, advantage, old_prediction], outputs:[out_actions]);
+        model.compile(optimizer: Adam(lr: LR), loss:[proximal_policy_optimization_loss_continuous(advantage: advantage, old_prediction: old_prediction)]);
+        model.summary();
+
+        return model;
+
+    } static object build_critic(){
+
+        state_input = Input(shape: (NUM_STATE,));
+        x = Dense(HIDDEN_SIZE, activation: "tanh").Apply(state_input);
+        for (int _ in range(NUM_LAYERS - 1))
+            x = Dense(HIDDEN_SIZE, activation: "tanh").Apply(x);
+
+        out_value = Dense(1).Apply(x);
+
+        model = Model(inputs:[state_input], outputs:[out_value]);
+        model.compile(optimizer: Adam(lr: LR), loss: "mse");
+
+        return model;
+
+    } static object reset_env(){
+        this.episode += 1;
+        if (this.episode % 100 == 0)
+            this.val = true;
+        else
+            this.val = false;
+        this.observation = this.env.Reset();
+        this.reward = new List<double>();
+
+    } static object get_action(){
+        p = this.actor.predict([this.observation.reshape(1, NUM_STATE), DUMMY_VALUE, DUMMY_ACTION]);
+        if (this.val == false)
+            action = np.random.choice(NUM_ACTIONS, probabilities: np.nan_to_num(p[0]));
+        else
+            action = np.argmax(p[0]);
+        action_matrix = np.zeros(NUM_ACTIONS);
+        action_matrix[action] = 1;
+        return action, action_matrix, p;
+
+    } static object get_action_continuous(){
+        p = this.actor.predict([this.observation.reshape(1, NUM_STATE), DUMMY_VALUE, DUMMY_ACTION]);
+        if (this.val == false)
+            action = action_matrix = p[0] + np.random.normal(loc: 0, scale: NOISE, size: p[0].shape);
+        else
+            action = action_matrix = p[0];
+        return (action, action_matrix, p);
+
+    } static object transform_reward(){
+        if (this.val == true)
+            this.writer.add_scalar("Val episode reward", np.array(this.reward).sum(), this.episode);
+        else
+            this.writer.add_scalar("Episode reward", np.array(this.reward).sum(), this.episode);
+        for (int j in range(len(this.reward) - 2, -1, -1))
+            this.reward[j] += this.reward[j + 1] * GAMMA;
+
+    } static object get_batch(){
+        batch = [[], [], [], []];
+
+        tmp_batch = [[], [], []];
+        while (len(batch[0]) < BUFFER_SIZE){
+            if (CONTINUOUS==false)
+                action, action_matrix, predicted_action = this.get_action();
+            else
+                action, action_matrix, predicted_action = this.get_action_continuous();
+            var (observation, reward, done, info) = this.env.Step(action);
+            this.reward.Add(reward);
+
+            tmp_batch[0].Add(this.observation);
+            tmp_batch[1].Add(action_matrix);
+            tmp_batch[2].Add(predicted_action);
+            this.observation = observation;
+
+            if (done)
+                this.transform_reward();
+                if (this.val==false)
+                    for (int i in range(len(tmp_batch[0]))){
+                        var (obs, action, pred) = (tmp_batch[0][i], tmp_batch[1][i], tmp_batch[2][i]);
+                        r = this.reward[i];
+                        batch[0].Add(obs);
+                        batch[1].Add(action);
+                        batch[2].Add(pred);
+                        batch[3].Add(r);
+                    }
+                }
+                tmp_batch = [[], [], []];
+                this.reset_env();
+            }
+        }
+        var (obs, action, pred, reward) = (np.array(batch[0]), np.array(batch[1]), np.array(batch[2]), np.reshape(np.array(batch[3]), (len(batch[3]), 1)));
+        pred = np.reshape(pred, (pred.shape[0], pred.shape[2]));
+        return (obs, action, pred, reward);
+
+    } static object run(){
+        while (this.episode < EPISODES){
+            obs, action, pred, reward = this.get_batch();
+            obs, action, pred, reward = obs[:BUFFER_SIZE], action[:BUFFER_SIZE], pred[:BUFFER_SIZE], reward[:BUFFER_SIZE];
+            old_prediction = pred;
+            pred_values = this.critic.predict(obs);
+
+            advantage = reward - pred_values;
+
+            actor_loss = this.actor.fit([obs, advantage, old_prediction], [action], batch_size:BATCH_SIZE, shuffle:true, epochs:EPOCHS, verbose:false);
+            critic_loss = this.critic.fit([obs], [reward], batch_size:BATCH_SIZE, shuffle:true, epochs:EPOCHS, verbose:false);
+            this.writer.add_scalar("Actor loss", actor_loss.history["loss"][-1], this.gradient_steps);
+            this.writer.add_scalar("Critic loss", critic_loss.history["loss"][-1], this.gradient_steps);
+
+            this.gradient_steps += 1;
+        }
+    }
+}
+
+Main(){
+    ag = Agent();
+    ag.run();
+}
